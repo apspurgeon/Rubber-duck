@@ -47,6 +47,8 @@
 #include "ESP8266FtpServer.h"
 #include <BlynkSimpleEsp8266.h>
 
+
+
 #define BLYNK_PRINT Serial
 #define DBLYNKCERT_NAME "H3reyRYu6lEjFVRLbgwMF9JwLVMd8Lff"
 const char auth[] = xstr(BLYNKCERT_NAME); // your BLYNK Cert from build flags
