@@ -24,12 +24,17 @@
  Because the sensor is not 5V tolerant, we are using a 3.3 V 8 MHz Pro Mini or a 3.3 V Teensy 3.1.
  We have disabled the internal pull-ups used by the Wire library in the Wire.h/twi.c utility file.
  We are also using the 400 kHz fast I2C mode by setting the TWI_FREQ  to 400000L /twi.h utility file.
+
+Add this to platformio.ini and place mopdified ESP8266HTTPClient.h (line 49) with 5000 delay changed to 50 for Geiger 
+lib_deps =
+  D:\Googledrive\Manuals\GitKraken\Rubber duck\ESP8266HTTPClient\
  */
 
 #define xstr(s) str(s)
 #define str(s) #s
 
 //#include <SPI.h>
+#include <Arduino.h>
 #include <GY91.h>
 #include "Adafruit_BMP280.h"
 #include <DFPlayer_Mini_Mp3.h> //Library for TF Sound module
@@ -43,16 +48,13 @@
 #include <DNSServer.h>
 #include <ArduinoJson.h>
 #include "FS.h"
-#include <TimeLib.h>       //https://github.com/PaulStoffregen/Time.git
 #include "ESP8266FtpServer.h"
 #include <BlynkSimpleEsp8266.h>
-
-
+#include <TimeLib.h> //https://github.com/PaulStoffregen/Time.git
 
 #define BLYNK_PRINT Serial
 #define DBLYNKCERT_NAME "H3reyRYu6lEjFVRLbgwMF9JwLVMd8Lff"
 const char auth[] = xstr(BLYNKCERT_NAME); // your BLYNK Cert from build flags
-
 
 // See also MPU-9250 Register Map and Descriptions, Revision 4.0, RM-MPU-9250A-00, Rev. 1.4, 9/9/2013 for registers not listed in
 // above document; the MPU9250 and MPU9150 are virtually identical but the latter has a different register map
@@ -62,7 +64,6 @@ const char auth[] = xstr(BLYNKCERT_NAME); // your BLYNK Cert from build flags
 
 // NTP
 #define NTP_SERVER "ch.pool.ntp.org"
-#define SerialDebug true // set to true to get Serial output for debugging
 
 // Set initial input parameters
 enum Ascale
@@ -88,15 +89,15 @@ enum Mscale
 };
 
 //Tweaks
-#define TEMP_CORR (-1)              //Manual correction of temp sensor (mine reads 1 degree too high)
-#define ELEVATION (100)             //Enter your elevation in m ASL to calculate rel pressure (ASL/QNH) at your place
+#define TEMP_CORR (-1)  //Manual correction of temp sensor (mine reads 1 degree too high)
+#define ELEVATION (100) //Enter your elevation in m ASL to calculate rel pressure (ASL/QNH) at your place
 
 // Specify sensor full scale
 uint8_t Gscale = GFS_250DPS;
 uint8_t Ascale = AFS_2G;
-uint8_t Mscale = MFS_16BITS; // Choose either 14-bit or 16-bit magnetometer resolution
-uint8_t Mmode = 0x02;        // 2 for 8 Hz, 6 for 100 Hz continuous magnetometer data read
-float aRes, gRes, mRes;      // scale resolutions per LSB for the sensors
+uint8_t Mscale = MFS_16BITS;                                 // Choose either 14-bit or 16-bit magnetometer resolution
+uint8_t Mmode = 0x02;                                        // 2 for 8 Hz, 6 for 100 Hz continuous magnetometer data read
+float aRes, gRes, mRes;                                      // scale resolutions per LSB for the sensors
 int16_t accelCount[3];                                       // Stores the 16-bit signed accelerometer sensor output
 int16_t gyroCount[3];                                        // Stores the 16-bit signed gyro sensor output
 int16_t magCount[3];                                         // Stores the 16-bit signed magnetometer sensor output
@@ -122,8 +123,8 @@ float zeta = sqrt(3.0f / 4.0f) * GyroMeasDrift; // compute zeta, the other free 
 #define Kp 2.0f * 5.0f                          // these are the free parameters in the Mahony filter and fusion scheme, Kp for proportional feedback, Ki for integral
 #define Ki 0.0f
 
-uint32_t delt_t = 0;              // used to control display output rate
-uint32_t count = 0, sumCount = 0, timecount = 0, zambretticount =0; // used to control display output rate
+uint32_t delt_t = 0;                                                            // used to control display output rate
+uint32_t count = 0, sumCount = 0, timecount = 0, NSWEcount, zambretticount = 0; // used to control display output rate
 float pitch, yaw, roll;
 float oldpitch, oldyaw, oldroll;
 float deltat = 0.0f, sum = 0.0f;          // integration interval for both filter schemes
@@ -133,18 +134,19 @@ uint32_t Now = 0;                         // used to calculate integration inter
 float ax, ay, az, gx, gy, gz, mx, my, mz; // variables to hold latest sensor data values
 float qq[4] = {1.0f, 0.0f, 0.0f, 0.0f};   // vector to hold quaternion
 float eInt[3] = {0.0f, 0.0f, 0.0f};       // vector to hold integral error for Mahony method
+int heading;
 
 //Pressure
 int pressure;
 int minpressure = 100000;
 int maxpressure = 0;
 int Zambrettiarraysize = 36;
-int Zambretti_array[36];                    //Store readings for 3hr period
-long Zambretti_count = 1;                   //cycle from 1 to 36 for each 5min reading
+int Zambretti_array[36];  //Store readings for 3hr period
+long Zambretti_count = 1; //cycle from 1 to 36 for each 5min reading
 long pressure_read_millis;
 int write_timestamp;
 int accuracy_in_percent;
-
+int accuracygate = 12; //Must reach this level (12 x 30min) to give a forecast
 float measured_temp;
 float measured_humi;
 float measured_pres;
@@ -166,16 +168,18 @@ uint32_t touchmax = 5000;
 int touch1 = 500;
 
 //DF Player
-int mp3vol = 30;                //Volume for DF card player.  Keep at 0, used as a flag to skip functions if not wifimanager credentials (no sound option)
+int mp3vol = 20;                //Volume for DF card player.  Keep at 0, used as a flag to skip functions if not wifimanager credentials (no sound option)
 int mp3_selected = 1;           //Default mp3 to play ("mp3/0001.mp3" on SDcard)
 SoftwareSerial mySerial(0, 14); // Declare pin RX & TX pins for TF Sound module.
 long MP3millis;
 
 //LED details
-#define NUM_LEDS_PER_STRIP 10 //Number of LEDs per strip
+#define NUM_LEDS_PER_STRIP 29 //Number of LEDs per strip
 #define PIN_LED D7            //I.O pin on ESP2866 device going to LEDs
 #define COLOR_ORDER GRB       // LED stips aren't all in the same RGB order.  If colours are wrong change this  e.g  RBG > GRB.   :RBG=TARDIS
-#define brightness 255
+#define brightness 64
+#define brightness1 64
+#define brightness2 255
 struct CRGB leds[NUM_LEDS_PER_STRIP]; //initiate FastLED with number of LEDs
 int LEDpick = 0;
 long LEDmillis;
@@ -183,16 +187,23 @@ int red = 128;
 int green = 128;
 int blue = 128;
 
+int body = 16;
+int head = 24;
+int beak = 26;
+int eye = 27;
+
 //Wifi and internet variables
 const unsigned int localPort = 2390; // local port to listen for UDP packets
-//const char *geiger = "http://detectportal.firefox.com/"; //"http://192.168.1.105/";
 const char *geiger = "http://192.168.1.105/j/";
 String geigerresponse;
+String recovered_ssid;
+String recovered_pass;
 
 //Duck touch & sound vars
 uint32_t Duckaction_millis = millis();
-int Duck_play = 0;
-int Touch_play = 0;
+int Duck_quack_mp3, Duck_north_mp3, Duck_north_LED, Duck_north_mp3_flag = 0;
+int Touch_play, Touch_play1 = 0;
+int absyaw;
 
 //Millis Unix_timestmap update
 unsigned long millis_unix_timestamp;
@@ -205,7 +216,7 @@ const int NTP_PACKET_SIZE = 48;                                                 
 byte packetBuffer[NTP_PACKET_SIZE];                                                                     //buffer to hold incoming and outgoing packets
 unsigned long epoch = 0, lastepoch = 0, Last_NTP_millis = 0, LastAPI, LastLED, epochstart, startmillis; //Unix time in seconds
 int lastepochcount = 1, totalfailepoch = 0;
-int hour_UTC, minute_UTC, second_UTC;                                           //UTC time
+int hour_UTC, minute_UTC, second_UTC;                               //UTC time
 int clock_minutes_from_midnight, local_clock_minutes_from_midnight; //Minutes from midnight
 int NTP_Seconds_to_wait = 1;                                        //Initial wait time between NTP/Sunrise pulls (1 sec)
 String clock_AMPM;                                                  //AM/PM from NTP Server
@@ -213,19 +224,20 @@ int printNTP = 0;                                                   //Set to 1 w
 int Seconds_SinceLast_NTP_millis;                                   //Counts seconds since last NTP pull
 int retryNTP = 0;                                                   //Counts the number of times the NTP Server request has had to retry
 int UTC_Cycle = 53;
-int timefactor = 1; //Used for testing to accelerate time
-int verbose_output = 0; //Flag to enable/disable printing on informations
-int NTPSecondstowait = 1 * 60 * 60; //Wait between NTP pulls (sec)
-int working_hourtomin = 0;   //Used to convert hours into total minutes
+int timefactor = 1;                              //Used for testing to accelerate time
+int Display_data_duck;                           //Flag to enable/disable printing on informations
+int NTPSecondstowait = 1 * 60 * 60;              //Wait between NTP pulls (sec)
+int working_hourtomin = 0;                       //Used to convert hours into total minutes
 int localUTC = 12;                               //Country UTC offset, needed for UTC for day/night calc  (+12 for NZ)  don't need to change for daylight saving as no needed for day/night
 int UTCoffset = 0;                               //Set my user with touch button +1, -1, 0
 const char *NTPServerName = "0.nz.pool.ntp.org"; //local NTP server
 
 //Time delays
-uint32_t delayamount = 1000;   //LED update delay
-uint32_t zambretti_delayamount = 30 * 60 * 1000;   //Update Zambretti
-uint32_t showtime_delayamount = 60 * 1000;    //Display local time every 20s
+uint32_t delayamount = 2000;                     //LED update delay
+uint32_t zambretti_delayamount = 30 * 60 * 1000; //Update Zambretti
+uint32_t showtime_delayamount = 60 * 1000;       //Display local every 60s
 uint32_t pressure_read_interval = 5 * 60 * 1000; //5mins x 60 sec x 1000 millis
+uint32_t NSWE_delayamount = 4 * 1000;            //Speak if North every 5s
 unsigned long currentMillis = millis();
 
 //Geiger vars
@@ -247,6 +259,12 @@ int restmaxmin = 0;
 int APICount = 0;
 String JSON_Extract(String lookfor);
 
+//Print var
+int Display_data = 0; // 0 = No serial print, 1 = serial print
+
+//Reset - format
+String resetfilename = "/reset.txt"; //Filename for triggering restart in SPIFFS
+
 // FORECAST CALCULATION
 unsigned long current_timestamp; // Actual timestamp read from NTPtime_t now;
 unsigned long saved_timestamp;   // Timestamp stored in SPIFFS
@@ -263,6 +281,9 @@ String ZambrettiSays(char code);
 int CalculateTrend();
 int16_t readTempData();
 
+int Zambretti_mp3 = 0;
+int Zambretti_trend_mp3 = 0;
+int Zambretti_LED = 0; //1=Stormy (X>Z), 2=Rain (T>W), 3=Unsettled (P>S), 4=Showery (I>O), 5=Fine (A>H)
 const char TEXT_RISING_FAST[] = "Rising fast";
 const char TEXT_RISING[] = "Rising";
 const char TEXT_RISING_SLOW[] = "Rising slow";
@@ -298,7 +319,6 @@ const char TEXT_ZAMBRETTI_Y[] = "Stormy, possibly improving";
 const char TEXT_ZAMBRETTI_Z[] = "Stormy, much rain";
 const char TEXT_ZAMBRETTI_DEFAULT[] = "Sorry, no forecast for the moment";
 
-
 //Declare functions
 uint8_t readByte(uint8_t address, uint8_t subAddress);
 void writeByte(uint8_t address, uint8_t subAddress, uint8_t data);
@@ -317,8 +337,7 @@ void getMres();
 void initAK8963(float *destination);
 void MadgwickQuaternionUpdate(float ax, float ay, float az, float gx, float gy, float gz, float mx, float my, float mz);
 void MahonyQuaternionUpdate(float ax, float ay, float az, float gx, float gy, float gz, float mx, float my, float mz);
-void Checknewdata();
-void Displaydata();
+void MPU9250_Dataupdate();
 void Timekeeping();
 void Touchsensor_check();
 void StartOTA();
@@ -327,12 +346,13 @@ void WiFi_start();
 void Test_LEDs();
 void DotheLEDs();
 void Duck_movement();
+void Duck_alignment();
 void Check_Geiger();
 void LEDrange();
 void API_Request();
 void Zambretti_calc();
 void (*resetFunc)(void) = 0; // declare reset function @ address 0
-void measurementEvent();      
+void measurementEvent();
 void ReadFromSPIFFS();
 void WriteToSPIFFS(int write_timestamp);
 void do_blynk();
@@ -346,20 +366,50 @@ void update_epoch_time();
 void decode_epoch(unsigned long currentTime);
 void initiate_time();
 void LocalClock();
-bool Check_Time();                            //Check time is correct and ok
+bool Check_Time(); //Check time is correct and ok
 
 //Classes
-WiFiUDP udp;              // A UDP instance to let us send and receive packets over UDP
-Adafruit_BMP280 myBMP280; //Adafruit_BMP280 myBMP280;
+WiFiUDP udp;                // A UDP instance to let us send and receive packets over UDP
+Adafruit_BMP280 myBMP280;   //Adafruit_BMP280 myBMP280;
 ESP8266WiFiMulti wifiMulti; // Create an instance of the ESP8266WiFiMulti class, called 'wifiMulti'
 IPAddress timeServer;
 FtpServer ftpSrv;
 
 uint32_t getmillis1, getmillis2;
 
+//BLYNK Definition to capture virtual pin to start prank
+BLYNK_WRITE(V1)
+{
+  if (param.asInt() == 1)
+  {
+    // assigning incoming value from pin V1 to a variable
+    Serial.println("Formatting SPIFFs");
+    SPIFFS.format();
+    delay(2000);
+    //FirstTimeRun();
+    ESP.restart();
+  }
+}
+
+BLYNK_WRITE(V3)
+{
+  if (param.asInt() == 1)
+  {
+    // assigning incoming value from pin V3 to a variable
+
+    if (accuracy >= accuracygate)
+    {
+      mp3_play(Zambretti_trend_mp3); //only one of these will have a value
+      delay(1000);
+      yield();
+    }
+    mp3_play(Zambretti_mp3);
+  }
+}
+
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(115200);
   delay(1000);
   Serial.println();
   Serial.println("Quack Quack..");
@@ -372,7 +422,6 @@ void setup()
   //Blynk.begin(auth, WiFi.SSID().c_str(), pass);
   Blynk.config(auth);
   Blynk.connect();
-
 
   FastLED.addLeds<WS2811, PIN_LED, COLOR_ORDER>(leds, NUM_LEDS_PER_STRIP); //Initialise the LEDs
 
@@ -387,7 +436,7 @@ void setup()
   mp3_set_volume(mp3vol);   //Set default volume
   mp3_stop();               //soft-Reset module DFPlayer.  Make sure nothing is playing on start up
 
-  Wire.begin();   //Initial I2C bus
+  Wire.begin(); //Initial I2C bus
   delay(1000);
   Startsensor();
   Test_LEDs();
@@ -401,11 +450,11 @@ void setup()
   pressure_read_millis = millis();
 
   //******** GETTING THE TIME FROM NTP SERVER  ***********************************
-  initiate_time();        //Get NTP and time set up for the first time
+  initiate_time(); //Get NTP and time set up for the first time
 
   //current_timestamp = ntpClient.getUnixTime(); // get UNIX timestamp (seconds from 1.1.1970 on)
   saved_timestamp = current_timestamp;
-  millis_unix_timestamp = millis();   //millis time tracking reset to current millis when getting new NTP time
+  millis_unix_timestamp = millis(); //millis time tracking reset to current millis when getting new NTP time
   millis_unix_timestamp_baseline = current_timestamp;
 
   Serial.print("Current UNIX Timestamp: ");
@@ -424,34 +473,72 @@ void setup()
   Serial.println(year(current_timestamp));
 
   SPIFFS_init();
-  
-if (SPIFFS.begin()) {
-   Serial.println("SPIFFS opened!");
-   Serial.println("");
-  ftpSrv.begin("esp8266", "esp8266"); // username, password for ftp. Set ports in ESP8266FtpServer.h (default 21, 50009 for PASV)
-}
 
-    //Initial run - Do this now so if rebooted gets old data and starts with history, otherwise we wait for 30mins for this to happen
-    measurementEvent();   //Get BMP280 Pressure data
-      yield();
-    ReadFromSPIFFS();     //Read the previous SPIFFs
-      yield();
-    UpdateSPIFFS();       //Update the SPIFFs
-    Zambretti_calc();
-  
-    //do_blynk();
+  if (SPIFFS.begin())
+  {
+    Serial.println("SPIFFS opened!");
+    Serial.println("");
+  }
+
+  ftpSrv.begin(recovered_ssid, recovered_pass); // username, password for ftp. Set ports in ESP8266FtpServer.h (default 21, 50009 for PASV)
+
+  //Initial run - Do this now so if rebooted gets old data and starts with history, otherwise we wait for 30mins for this to happen
+  measurementEvent(); //Get BMP280 Pressure data
+  yield();
+  ReadFromSPIFFS(); //Read the previous SPIFFs
+  yield();
+  UpdateSPIFFS(); //Update the SPIFFs
+  Zambretti_calc();
 
   zambretticount = millis(); //Initial count for Zambretti update
   timecount = millis();      //Initial count for NTP update
   count = millis();          //Initial count for Geiger LED update update
+  NSWEcount = millis();
+
+  //This requires changes to WiFiManager.cpp and WiFiManager.h
+
+  //Un-comment from WiFiManager.cpp
+  // void WiFiManager::startWPS() {
+  //   DEBUG_WM(F("START WPS"));
+  //   WiFi.beginWPSConfig();
+  //   DEBUG_WM(F("END WPS"));
+  // }
+
+  //   String WiFiManager::getSSID() {
+  //   if (_ssid == "") {
+  //     DEBUG_WM(F("Reading SSID"));
+  //     _ssid = WiFi.SSID();
+  //     DEBUG_WM(F("SSID: "));
+  //     DEBUG_WM(_ssid);
+  //   }
+  //   return _ssid;
+  //   }
+
+  //   String WiFiManager::getPassword() {
+  //   if (_pass == "") {
+  //     DEBUG_WM(F("Reading Password"));
+  //     _pass = WiFi.psk();
+  //     DEBUG_WM("Password: " + _pass);
+  //     //DEBUG_WM(_pass);
+  //   }
+  //   return _pass;
+  //   }
+
+  //Add last 2 lines into WiFiManager.h
+  // class WiFiManager
+  // {
+  //   public:
+  //     WiFiManager();
+  //     ~WiFiManager();
+
+  // 	String          getSSID();
+  // 	String          getPassword();
 
   Serial.println("");
   Serial.println("********************************************************* START LOOP **************************************************************");
   Serial.println("");
   Serial.println("");
 }
-
-
 
 void loop()
 {
@@ -465,124 +552,219 @@ void loop()
 
   //Handlers
   ftpSrv.handleFTP();
-    yield();
+  yield();
   ArduinoOTA.handle();
-    yield();
-  Blynk.run();         //If Blynk being used  
-    yield();
-  Checknewdata();     //Check for new data MPU9250 and update vars
-    yield();
-  Timekeeping();      //Keep track ing micros() and use for calculation adjustments
-    yield();
+  yield();
+  Blynk.run(); //If Blynk being used
+  yield();
+  MPU9250_Dataupdate(); //Check for new data MPU9250 and update vars
+  yield();
+  Timekeeping(); //Keep track ing micros() and use for calculation adjustments
+  yield();
   MahonyQuaternionUpdate(ax, ay, az, gx * PI / 180.0f, gy * PI / 180.0f, gz * PI / 180.0f, my, mx, mz); //  MadgwickQuaternionUpdate(ax, ay, az, gx*PI/180.0f, gy*PI/180.0f, gz*PI/180.0f,  my,  mx, mz);
-    yield();
-  Duck_movement();      //Check for movement and make a sound
-    yield();
-  Touchsensor_check();  //Any touchs
-    yield();
+  yield();
+  Duck_movement(); //Check for movement and make a sound
+  yield();
+  Duck_alignment(); //Update yaw, pitch, roll and work out compass heading
+  yield();
+  Touchsensor_check(); //Any touchs on sensor - speak the forecast
+  yield();
   update_epoch_time(); //update epoch time by millis update or NTP request
-    yield();
+  yield();
   decode_epoch(epoch); //epoch has been updated, Now turn this into UTC clock_minutes_from_midnight
-    yield();
+  yield();
 
+  //heading = atan2(my, mx)*180./PI; //in degrees, magnetometer held level, Z straight down.
+
+  // Serial.println();
+  // Serial.print("Heading: ");
+  // Serial.print(heading);
+  // Serial.print("    yaw: ");
+  // Serial.print(yaw);
+  // Serial.print("    roll: ");
+  // Serial.print(roll);
+  // Serial.print("    pitch: ");
+  // Serial.print(pitch);
+  // Serial.print("    duck_north: ");
+  // Serial.print(Duck_north);
+  // Serial.print("    Duck_north_LED: ");
+  // Serial.print(Duck_north_LED);
+  // Serial.print("    NSWE count: ");
+  // Serial.println(NSWEcount);
 
   //*** Display local time
   delt_t = millis() - timecount;
   if (delt_t > showtime_delayamount)
   {
-    Serial.println("");
-    Serial.println("********************************************************");
-    
-    LocalClock();            //Turn minutes from midnight into local H:M
-    timecount = millis();    //Reset the count
-    
-    Serial.println("********************************************************");
-    Serial.println("");
+    if (Display_data == 1)
+    {
+      Serial.println("");
+      Serial.println("********************************************************");
+    }
+    LocalClock();         //Turn minutes from midnight into local H:M
+    timecount = millis(); //Reset the count
+
+    if (Display_data == 1)
+    {
+      Serial.println("********************************************************");
+      Serial.println("");
+    }
   }
 
+  yield();
 
   //*** Display Geiger / Zambretti and update LEDs
   delt_t = millis() - count;
   if (delt_t > delayamount)
   {
     Check_Geiger();
-      yield();
-    //Displaydata();      //Serial prints
+    yield();
+    Display_data_duck = 1; //Serial prints for this function (need this and global display_data == 1)
+    //Duck_alignment(); //Update yaw, pitch, roll
     do_blynk();
-      yield();
-    Zambretti_calc();   //Calculate weather forecast based on data and print  
-    count = millis();   //Reset the count
-
-  Serial.println("");
-  Serial.println("********************************************************");
-  Serial.println("");
+    yield();
+    Zambretti_calc(); //Calculate weather forecast based on data and print
+    count = millis(); //Reset the count
   }
 
+  yield();
 
   //*** Do the Zambretti - Get data, update SPIFFs array
   delt_t = millis() - zambretticount;
   if (delt_t > zambretti_delayamount)
   {
-    measurementEvent();   //Get BMP280 Pressure data
-      yield();
-    ReadFromSPIFFS();     //Read the previous SPIFFs
-      yield();
-    UpdateSPIFFS();       //Update the SPIFFs
-    
+    measurementEvent(); //Get BMP280 Pressure data
+    yield();
+    ReadFromSPIFFS(); //Read the previous SPIFFs
+    yield();
+    UpdateSPIFFS(); //Update the SPIFFs
+
     //do_blynk();
 
-    zambretticount = millis();    //Reset the count
+    zambretticount = millis(); //Reset the count
+  }
+
+  //If accuracy less than 6hours then make no foreacast
+  if (accuracy < accuracygate && Zambretti_mp3 > 0)
+  {
+    ZambrettisWords = TEXT_ZAMBRETTI_DEFAULT;
+    Zambretti_mp3 = 126;
   }
 
   yield();
 
+  //*** Check and sat North South West East
+  //1-Up, 2-Down, 3-Left, 4-Right, 5-Quack, 6-North, 7-South, 8-East, 9-West, 10-Radiation, 11-
+
+  // // Set NSWE millis only when north first triggered
+  // if (abs(yaw) <= 20 && Duck_north_LED == 0)
+  // {                          // yaw is -20 to 20
+  //   Duck_north_LED = 1;      //LED flag
+  //   Duck_north_mp3_flag = 1; //North mp3 flag
+  //   NSWEcount = millis();    //Reset the count
+  // }
+
+  // yield();
+
+  // //Not north, everything reset
+  // if (abs(yaw) > 20)
+  // { // yaw is -20 to 20
+  //   Duck_north_mp3 = 0;
+  //   Duck_north_LED = 0;      //LED flag
+  //   Duck_north_mp3_flag = 0; //LED flag
+  //   NSWEcount = millis();    //Reset the count
+  // }
+
+  yield();
+
+  //Test for playing sound, north for more than 5s
+  // delt_t = millis() - NSWEcount;
+  // if (delt_t > NSWE_delayamount && Duck_north_mp3_flag > 0) {
+  // Duck_north_mp3 = 200;        //Keep this as 5 for LEDs
+  // NSWEcount = millis();       //Reset the count so only plays once every 5s
+  // }
+
+  yield();
 
   //Manage Touch sensor or Movement priority
-  //If both movement and touch plays, then only play touch
-  if (Touch_play > 0 && Duck_play > 0)
+  //If both movement and north, then priortise movement
+  // if (Duck_north_mp3 > 0 && Duck_quack_mp3 > 0)
+  // {
+  //   Duck_north_mp3 = 0;
+  // }
+
+  yield();
+
+  //If both movement/north and touch plays, then only play touch
+  if (Touch_play > 0 && Duck_quack_mp3 > 0)
   {
-    Duck_play = 0;
+    Duck_quack_mp3 = 0;
   }
 
-  if (Touch_play > 0) //Anything tocuhed, play a sound
+  yield();
+
+  if (Touch_play + Duck_quack_mp3 > 0) //Anything touched, play a sound
   {
-    mp3_play(Touch_play);
-    Touch_play = 0;
+    int mp3_total = (Touch_play + Duck_quack_mp3);
+    Serial.println(mp3_total);
+
+    if (mp3_total < 50)
+    {
+      mp3_set_volume(30); //This is a quack, make it loud
+    }
+    else
+    {
+      mp3_set_volume(mp3vol); //Set default volume
+    }
+
+    if (accuracy >= accuracygate || Duck_quack_mp3 > 0)
+    {
+      mp3_play(mp3_total); //only one of these will have a value
+      delay(1000);
+      yield();
+    }
+    mp3_play(Touch_play1);
+    yield();
+    delay(2500);
+    yield();
+
+    Touch_play = 0;          //Zambretti trend mp3
+    Touch_play1 = 0;         //Zambretti forecast mp3
+    Duck_north_mp3 = 0;      //North mp3
+    Duck_north_mp3_flag = 0; //North flag
   }
 
-  if (Duck_play > 0) //Anything tocuhed, play a sound
-  {
-    mp3_play(Duck_play);
-    Duck_play = 0;
-  }
+  yield();
 }
-
-
-
 
 void Zambretti_calc()
 {
 
-//**************************Calculate Zambretti Forecast*******************************************
-  
-  accuracy_in_percent = accuracy*94/12;            // 94% is the max predicion accuracy of Zambretti
+  //**************************Calculate Zambretti Forecast*******************************************
+
+  accuracy_in_percent = accuracy * 94 / 12; // 94% is the max predicion accuracy of Zambretti
 
   ZambrettisWords = ZambrettiSays(char(ZambrettiLetter()));
-  
-  Serial.print("Zambretti says: ");
-  Serial.print(ZambrettisWords);
-  Serial.print(", ");
-  Serial.println(trend_in_words);
-  Serial.print("Prediction accuracy: ");
-  Serial.print(accuracy_in_percent);
-  Serial.println("%");
-  if (accuracy < 12){
-    Serial.println("Reason: Not enough weather data yet.");
-    Serial.print("We need ");
-    Serial.print((12 - accuracy) / 2);
-    Serial.println(" hours more to get sufficient data.");
+
+  if (Display_data == 1)
+  {
+    Serial.print("Zambretti says: ");
+    Serial.print(ZambrettisWords);
+    Serial.print(", ");
+    Serial.println(trend_in_words);
+    Serial.print("Prediction accuracy: ");
+    Serial.print(accuracy_in_percent);
+    Serial.println("%");
+    Serial.print("Zambretti mp3 = ");
+    Serial.println(Zambretti_mp3);
+    if (accuracy < 12)
+    {
+      Serial.println("Reason: Not enough weather data yet.");
+      Serial.print("We need ");
+      Serial.print((12 - accuracy) / 2);
+      Serial.println(" hours more to get sufficient data.");
+    }
   }
- 
 }
 
 char ZambrettiLetter()
@@ -596,8 +778,13 @@ char ZambrettiLetter()
     float zambretti = 0.0009746 * rel_pressure_rounded * rel_pressure_rounded - 2.1068 * rel_pressure_rounded + 1138.7019;
     if (month(current_timestamp) < 4 || month(current_timestamp) > 9)
       zambretti = zambretti + 1;
-    Serial.print("Calculated and rounded Zambretti in numbers: ");
-    Serial.println(round(zambretti));
+
+    if (Display_data == 1)
+    {
+      Serial.print("Calculated and rounded Zambretti in numbers: ");
+      Serial.println(round(zambretti));
+    }
+
     switch (int(round(zambretti)))
     {
     case 0:
@@ -636,8 +823,12 @@ char ZambrettiLetter()
   if (z_trend == 0)
   {
     float zambretti = 138.24 - 0.133 * rel_pressure_rounded;
-    Serial.print("Calculated and rounded Zambretti in numbers: ");
-    Serial.println(round(zambretti));
+
+    if (Display_data == 1)
+    {
+      Serial.print("Calculated and rounded Zambretti in numbers: ");
+      Serial.println(round(zambretti));
+    }
     switch (int(round(zambretti)))
     {
     case 0:
@@ -682,8 +873,13 @@ char ZambrettiLetter()
     //A Summer rising, improves the prospects by 1 unit over a Winter rising
     if (month(current_timestamp) < 4 || month(current_timestamp) > 9)
       zambretti = zambretti + 1;
-    Serial.print("Calculated and rounded Zambretti in numbers: ");
-    Serial.println(round(zambretti));
+
+    if (Display_data == 1)
+    {
+      Serial.print("Calculated and rounded Zambretti in numbers: ");
+      Serial.println(round(zambretti));
+    }
+
     switch (int(round(zambretti)))
     {
     case 0:
@@ -731,9 +927,12 @@ char ZambrettiLetter()
       ; //Stormy, much rain
     }
   }
-  Serial.print("This is Zambretti's famous letter: ");
-  Serial.println(z_letter);
-  Serial.println("");
+  if (Display_data == 1)
+  {
+    Serial.print("This is Zambretti's famous letter: ");
+    Serial.println(z_letter);
+    Serial.println("");
+  }
   return z_letter;
 }
 
@@ -758,141 +957,223 @@ int CalculateTrend()
   //--> calculating the average and storing it into [11]
   pressure_difference[11] = (pressure_difference[0] + pressure_difference[1] + pressure_difference[2] + pressure_difference[3] + pressure_difference[4] + pressure_difference[5] + pressure_difference[6] + pressure_difference[7] + pressure_difference[8] + pressure_difference[9] + pressure_difference[10]) / 11;
 
-  Serial.print("Current trend: ");
-  Serial.print(pressure_difference[11]);
-  Serial.print(" -->  ");
-  
+  if (Display_data == 1)
+  {
+    Serial.print("Current trend: ");
+    Serial.print(pressure_difference[11]);
+    Serial.print(" -->  ");
+  }
+
   if (pressure_difference[11] > 3.5)
   {
     trend_in_words = TEXT_RISING_FAST;
+    Zambretti_trend_mp3 = 127;
     trend = 1;
   }
   else if (pressure_difference[11] > 1.5 && pressure_difference[11] <= 3.5)
   {
     trend_in_words = TEXT_RISING;
+    Zambretti_trend_mp3 = 128;
     trend = 1;
   }
   else if (pressure_difference[11] > 0.25 && pressure_difference[11] <= 1.5)
   {
     trend_in_words = TEXT_RISING_SLOW;
+    Zambretti_trend_mp3 = 129;
     trend = 1;
   }
   else if (pressure_difference[11] > -0.25 && pressure_difference[11] < 0.25)
   {
     trend_in_words = TEXT_STEADY;
+    Zambretti_trend_mp3 = 130;
     trend = 0;
   }
   else if (pressure_difference[11] >= -1.5 && pressure_difference[11] < -0.25)
   {
     trend_in_words = TEXT_FALLING_SLOW;
+    Zambretti_trend_mp3 = 131;
     trend = -1;
   }
   else if (pressure_difference[11] >= -3.5 && pressure_difference[11] < -1.5)
   {
     trend_in_words = TEXT_FALLING;
+    Zambretti_trend_mp3 = 132;
     trend = -1;
   }
   else if (pressure_difference[11] <= -3.5)
   {
     trend_in_words = TEXT_FALLING_FAST;
+    Zambretti_trend_mp3 = 133;
     trend = -1;
   }
 
-  Serial.println(trend_in_words);
+  if (Display_data == 1)
+  {
+    Serial.println(trend_in_words);
+  }
+
   return trend;
 }
 
 String ZambrettiSays(char code)
 {
+  Zambretti_LED = 0;
   String zambrettis_words = "";
   switch (code)
   {
   case 'A':
     zambrettis_words = TEXT_ZAMBRETTI_A;
+    Zambretti_mp3 = 100;
+    Zambretti_LED = 5;
     break; //see Tranlation.h
   case 'B':
     zambrettis_words = TEXT_ZAMBRETTI_B;
+    Zambretti_mp3 = 101;
+    Zambretti_LED = 5;
     break;
   case 'C':
     zambrettis_words = TEXT_ZAMBRETTI_C;
+    Zambretti_mp3 = 102;
+    Zambretti_LED = 5;
     break;
   case 'D':
     zambrettis_words = TEXT_ZAMBRETTI_D;
+    Zambretti_mp3 = 103;
+    Zambretti_LED = 5;
     break;
   case 'E':
     zambrettis_words = TEXT_ZAMBRETTI_E;
+    Zambretti_mp3 = 104;
+    Zambretti_LED = 5;
     break;
   case 'F':
     zambrettis_words = TEXT_ZAMBRETTI_F;
+    Zambretti_mp3 = 105;
+    Zambretti_LED = 5;
     break;
   case 'G':
     zambrettis_words = TEXT_ZAMBRETTI_G;
+    Zambretti_mp3 = 106;
+    Zambretti_LED = 5;
     break;
   case 'H':
     zambrettis_words = TEXT_ZAMBRETTI_H;
+    Zambretti_mp3 = 107;
+    Zambretti_LED = 5;
     break;
   case 'I':
     zambrettis_words = TEXT_ZAMBRETTI_I;
+    Zambretti_mp3 = 108;
+    Zambretti_LED = 4;
     break;
   case 'J':
     zambrettis_words = TEXT_ZAMBRETTI_J;
+    Zambretti_mp3 = 109;
+    Zambretti_LED = 4;
     break;
   case 'K':
     zambrettis_words = TEXT_ZAMBRETTI_K;
+    Zambretti_mp3 = 110;
+    Zambretti_LED = 4;
     break;
   case 'L':
     zambrettis_words = TEXT_ZAMBRETTI_L;
+    Zambretti_mp3 = 111;
+    Zambretti_LED = 4;
     break;
   case 'M':
     zambrettis_words = TEXT_ZAMBRETTI_M;
+    Zambretti_mp3 = 112;
+    Zambretti_LED = 4;
     break;
   case 'N':
     zambrettis_words = TEXT_ZAMBRETTI_N;
+    Zambretti_mp3 = 113;
+    Zambretti_LED = 4;
     break;
   case 'O':
     zambrettis_words = TEXT_ZAMBRETTI_O;
+    Zambretti_mp3 = 114;
+    Zambretti_LED = 4;
     break;
   case 'P':
     zambrettis_words = TEXT_ZAMBRETTI_P;
+    Zambretti_mp3 = 115;
+    Zambretti_LED = 3;
     break;
   case 'Q':
     zambrettis_words = TEXT_ZAMBRETTI_Q;
+    Zambretti_mp3 = 116;
+    Zambretti_LED = 3;
     break;
   case 'R':
     zambrettis_words = TEXT_ZAMBRETTI_R;
+    Zambretti_mp3 = 117;
+    Zambretti_LED = 3;
     break;
   case 'S':
     zambrettis_words = TEXT_ZAMBRETTI_S;
+    Zambretti_mp3 = 118;
+    Zambretti_LED = 3;
     break;
   case 'T':
     zambrettis_words = TEXT_ZAMBRETTI_T;
+    Zambretti_mp3 = 119;
+    Zambretti_LED = 2;
     break;
   case 'U':
     zambrettis_words = TEXT_ZAMBRETTI_U;
+    Zambretti_mp3 = 120;
+    Zambretti_LED = 2;
     break;
   case 'V':
     zambrettis_words = TEXT_ZAMBRETTI_V;
+    Zambretti_mp3 = 121;
+    Zambretti_LED = 2;
     break;
   case 'W':
     zambrettis_words = TEXT_ZAMBRETTI_W;
+    Zambretti_mp3 = 122;
+    Zambretti_LED = 2;
     break;
   case 'X':
     zambrettis_words = TEXT_ZAMBRETTI_X;
+    Zambretti_mp3 = 123;
+    Zambretti_LED = 1;
     break;
   case 'Y':
     zambrettis_words = TEXT_ZAMBRETTI_Y;
+    Zambretti_mp3 = 124;
+    Zambretti_LED = 1;
     break;
   case 'Z':
     zambrettis_words = TEXT_ZAMBRETTI_Z;
+    Zambretti_mp3 = 125;
+    Zambretti_LED = 1;
     break;
   default:
     zambrettis_words = TEXT_ZAMBRETTI_DEFAULT;
+    Zambretti_mp3 = 126;
     break;
   }
   return zambrettis_words;
 }
 
-void Displaydata()
+void Duck_movement()
+{
+  int movement = abs(gx) + abs(gy) + abs(gz);
+  if (movement >= 50)
+  {
+    Duck_quack_mp3 = 5; //Quack quack
+    Duckaction_millis = millis();
+  }
+  else
+  {
+    Duck_quack_mp3 = 0;
+  }
+}
+
+void Duck_alignment()
 {
 
   yaw = atan2(2.0f * (qq[1] * qq[2] + qq[0] * qq[3]), qq[0] * qq[0] + qq[1] * qq[1] - qq[2] * qq[2] - qq[3] * qq[3]);
@@ -920,7 +1201,7 @@ void Displaydata()
     maxpressure = pressure;
   }
 
-  if (SerialDebug)
+  if (Display_data == 1 && Display_data_duck == 1)
   {
     // Print gyro values in degree/sec
     Serial.print("X-gyro rate: ");
@@ -940,7 +1221,6 @@ void Displaydata()
     Serial.print(pitch, 2);
     Serial.print(", ");
     Serial.println(roll, 2);
-
 
     Serial.print("Dif Yaw, Pitch, Roll: ");
     Serial.print(yaw - oldyaw, 2);
@@ -969,8 +1249,8 @@ void Displaydata()
     Serial.print(pressure, 1);
     Serial.println(" milli bar");
 
-  Serial.print("Current UNIX Timestamp: ");
-  Serial.println(current_timestamp);
+    Serial.print("Current UNIX Timestamp: ");
+    Serial.println(current_timestamp);
 
     Serial.println();
     Serial.println("********************************************************\n");
@@ -983,6 +1263,8 @@ void Displaydata()
 
     Serial.println();
     Serial.println("********************************************************\n");
+
+    Display_data_duck = 0;
   }
 
   sumCount = 0;
@@ -999,7 +1281,7 @@ void Timekeeping()
   sumCount++;
 }
 
-void Checknewdata()
+void MPU9250_Dataupdate()
 {
   // If intPin goes high, all data registers have new data
   if (readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01)
@@ -1750,7 +2032,7 @@ void Startsensor()
     initAK8963(magCalibration);
     Serial.println("AK8963 initialized for active data mode...."); // Initialize device for active mode read of magnetometer
 
-    if (SerialDebug)
+    if (Display_data)
     {
       //  Serial.println("Calibration values: ");
       Serial.print("X-Axis sensitivity adjustment value ");
@@ -1778,6 +2060,9 @@ void WiFi_start()
 {
   WiFiManager wifiManager;
   wifiManager.autoConnect("WiFi_RubberDuck");
+
+  recovered_ssid = wifiManager.getSSID();
+  recovered_pass = wifiManager.getPassword();
 }
 
 void StartOTA()
@@ -1864,51 +2149,64 @@ void Test_LEDs()
 
 void DotheLEDs()
 {
-  //Do the LEDs
-  // if (millis() - LEDmillis > 500)
-  // {
-  //   fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-  //   leds[LEDpick].setRGB(255, 255, 255); //Light on top of TARDIS White
 
-  //   LEDpick++;
-  //   if (LEDpick >= NUM_LEDS_PER_STRIP)
-  //   {
-  //     LEDpick = 0;
-  //   }
-
-  //   FastLED.setBrightness(brightness);
-  //   FastLED.show();
-  //   LEDmillis = millis();
-  // }
-
-  //Geiger fill
+  //Clear LEDs
   fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-  fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(red, green, blue));
-  FastLED.show();
-}
 
-void Duck_movement()
-{
+  //Zambretti fill  (Body / head)
+  //1=Stormy (X>Z), 2=Rain (T>W), 3=Unsettled (P>S), 4=Showery (I>O), 5=Fine (A>H)
 
-  //if (millis() >= Duckaction_millis + 2000)
-  if (millis() >= Duckaction_millis)
+  //Stormy
+  if (Zambretti_LED == 1)
   {
-
-    int movement = abs(gx) + abs(gy) + abs(gz);
-    if (movement >= 50)
-    {
-      Duck_play = 1;
-      Duckaction_millis = millis();
-    }
-    else
-    {
-      Duck_play = 0;
-    }
+    fill_solid(&(leds[0]), beak /*number of leds*/, CRGB(255, 0, 0));
+    FastLED.setBrightness(brightness2);
   }
+
+  //Rain
+  if (Zambretti_LED == 2)
+  {
+    fill_solid(&(leds[0]), beak /*number of leds*/, CRGB(255, 0, 0));
+    FastLED.setBrightness(brightness1);
+  }
+
+  //Unsettled
+  if (Zambretti_LED == 3)
+  {
+    fill_solid(&(leds[0]), beak /*number of leds*/, CRGB(255, 0, 0));
+    FastLED.setBrightness(brightness);
+  }
+
+  //Showery
+  if (Zambretti_LED == 4)
+  {
+    fill_solid(&(leds[0]), beak /*number of leds*/, CRGB(255, 255, 0));
+    FastLED.setBrightness(brightness);
+  }
+
+  //Fine
+  if (Zambretti_LED == 5)
+  {
+    fill_solid(&(leds[0]), beak /*number of leds*/, CRGB(255, 255, 255));
+    FastLED.setBrightness(brightness);
+  }
+
+  //Geiger fill  (beak)
+  for (int i = head; i < beak; i++)
+  {
+    leds[i] = CRGB(255, 0, 0);
+    //leds[i] = CRGB(red, green, blue);
+  }
+
+  leds[eye] = CRGB(red, green, blue);
+  leds[eye + 1] = CRGB(red, green, blue);
+
+  FastLED.show();
 }
 
 void Touchsensor_check()
 {
+  Touch_play = 0;
   touchsensor = csensy.capacitiveSensor(30);
 
   if (touchsensor > 0)
@@ -1941,7 +2239,9 @@ void Touchsensor_check()
 
         Serial.println();
         Serial.println("********************************************************\n");
-        Touch_play = 5;
+
+        Touch_play = Zambretti_trend_mp3;
+        Touch_play1 = Zambretti_mp3;
       }
     }
   }
@@ -1980,8 +2280,8 @@ void Check_Geiger()
   }
 
   //Display
-  LEDrange(); // Calculate LED colour range based on CPM
-  DotheLEDs();   //Update LEDs
+  LEDrange();  // Calculate LED colour range based on CPM
+  DotheLEDs(); //Update LEDs
 
   // Serial.print("cpm = ");
   // Serial.println(cpm);
@@ -2044,14 +2344,14 @@ void API_Request()
       // file found at server
       if (httpCode == HTTP_CODE_OK)
       {
-      // Serial.print("Start - ");
-      // getmillis1 = millis(); 
+        // Serial.print("Start - ");
+        // getmillis1 = millis();
 
         String payload = http.getString();
-        
-      // getmillis2 = millis();   
-      // Serial.print("Stop - ");  
-      //Serial.println(getmillis2 - getmillis1);
+
+        // getmillis2 = millis();
+        // Serial.print("Stop - ");
+        //Serial.println(getmillis2 - getmillis1);
 
         payload.toCharArray(buff, 400);
         geigerresponse = payload;
@@ -2160,11 +2460,11 @@ void LEDrange()
     green = 0;
     blue = 0;
 
-    FastLED.setBrightness(255);
+    FastLED.setBrightness(brightness);
   }
   else
   {
-    FastLED.setBrightness(64);
+    FastLED.setBrightness(brightness);
   }
 }
 
@@ -2177,12 +2477,12 @@ String JSON_Extract(String lookfor)
   return data[lookfor];
 }
 
+void measurementEvent()
+{
 
-void measurementEvent() { 
-    
-  //Measures absolute Pressure, Temperature, Humidity, Voltage, calculate relative pressure, 
+  //Measures absolute Pressure, Temperature, Humidity, Voltage, calculate relative pressure,
   //Dewpoint, Dewpoint Spread, Heat Index
-  
+
   //myBMP280.takeForcedMeasurement();
 
   // Get temperature
@@ -2192,7 +2492,7 @@ void measurementEvent() {
   Serial.print("Temp: ");
   Serial.print(measured_temp);
   Serial.print("°C; ");
- 
+
   // // Get humidity
   // measured_humi = myBMP280.readHumidity();
   // // print on serial monitor
@@ -2208,8 +2508,8 @@ void measurementEvent() {
   Serial.print("hPa; ");
 
   // Calculate and print relative pressure
-  SLpressure_hPa = (((measured_pres * 100.0)/pow((1-((float)(ELEVATION))/44330), 5.255))/100.0);
-  rel_pressure_rounded=(int)(SLpressure_hPa+.5);
+  SLpressure_hPa = (((measured_pres * 100.0) / pow((1 - ((float)(ELEVATION)) / 44330), 5.255)) / 100.0);
+  rel_pressure_rounded = (int)(SLpressure_hPa + .5);
   // print on serial monitor
   Serial.print("Pressure rel: ");
   Serial.print(rel_pressure_rounded);
@@ -2218,7 +2518,7 @@ void measurementEvent() {
   // Calculate dewpoint
   double a = 17.271;
   double b = 237.7;
-  double tempcalc = (a * measured_temp) / (b + measured_temp) + log(measured_humi*0.01);
+  double tempcalc = (a * measured_temp) / (b + measured_temp) + log(measured_humi * 0.01);
   DewpointTemperature = (b * tempcalc) / (a - tempcalc);
   Serial.print("Dewpoint: ");
   Serial.print(DewpointTemperature);
@@ -2232,98 +2532,114 @@ void measurementEvent() {
   Serial.println("°C; ");
 
   // Calculate HI (heatindex in °C) --> HI starts working above 26,7 °C
-  if (measured_temp > 26.7) {
-  double c1 = -8.784, c2 = 1.611, c3 = 2.338, c4 = -0.146, c5= -1.230e-2, c6=-1.642e-2, c7=2.211e-3, c8=7.254e-4, c9=-2.582e-6  ;
-  double T = measured_temp;
-  double R = measured_humi;
-  
-  double A = (( c5 * T) + c2) * T + c1;
-  double B = ((c7 * T) + c4) * T + c3;
-  double C = ((c9 * T) + c8) * T + c6;
-  HeatIndex = (C * R + B) * R + A; 
-  } 
-  else {
+  if (measured_temp > 26.7)
+  {
+    double c1 = -8.784, c2 = 1.611, c3 = 2.338, c4 = -0.146, c5 = -1.230e-2, c6 = -1.642e-2, c7 = 2.211e-3, c8 = 7.254e-4, c9 = -2.582e-6;
+    double T = measured_temp;
+    double R = measured_humi;
+
+    double A = ((c5 * T) + c2) * T + c1;
+    double B = ((c7 * T) + c4) * T + c3;
+    double C = ((c9 * T) + c8) * T + c6;
+    HeatIndex = (C * R + B) * R + A;
+  }
+  else
+  {
     HeatIndex = measured_temp;
     Serial.println("Not warm enough (less than 26.7 °C) for Heatindex");
   }
   Serial.print("HeatIndex: ");
   Serial.print(HeatIndex);
   Serial.print("°C; ");
- 
+
 } // end of void measurementEvent()
 
-void UpdateSPIFFS(){
-  
+void UpdateSPIFFS()
+{
+
   Serial.print("Timestamp difference: ");
   Serial.println(current_timestamp - saved_timestamp);
 
-  if (current_timestamp - saved_timestamp > 21600){    // last save older than 6 hours -> re-initialize values
+  if (current_timestamp - saved_timestamp > 21600)
+  { // last save older than 6 hours -> re-initialize values
     FirstTimeRun();
   }
-  else if (current_timestamp - saved_timestamp > 1800){ // it is time for pressure update (1800 sec = 30 min)
-    
-    for (int i = 11; i >= 1; i = i -1) {
-      pressure_value[i] = pressure_value[i-1];          // shifting values one to the right
-    }
-   
-  pressure_value[0] = rel_pressure_rounded;             // updating with acutal rel pressure (newest value)
+  else if (current_timestamp - saved_timestamp > 1800)
+  { // it is time for pressure update (1800 sec = 30 min)
 
-  if (accuracy < 12) {
-    accuracy = accuracy + 1;                            // one value more -> accuracy rises (up to 12 = 100%)
+    for (int i = 11; i >= 1; i = i - 1)
+    {
+      pressure_value[i] = pressure_value[i - 1]; // shifting values one to the right
     }
-    WriteToSPIFFS(current_timestamp);                   // update timestamp on storage
+
+    pressure_value[0] = rel_pressure_rounded; // updating with acutal rel pressure (newest value)
+
+    if (accuracy < 12)
+    {
+      accuracy = accuracy + 1; // one value more -> accuracy rises (up to 12 = 100%)
+    }
+    WriteToSPIFFS(current_timestamp); // update timestamp on storage
     Serial.println("writing current_timestamp");
   }
-  else {         
-    WriteToSPIFFS(saved_timestamp);                     // do not update timestamp on storage
+  else
+  {
+    WriteToSPIFFS(saved_timestamp); // do not update timestamp on storage
     Serial.println("writing saved_timestamp");
   }
 }
 
-void FirstTimeRun(){
+void FirstTimeRun()
+{
   Serial.println("---> Starting initializing process.");
   accuracy = 1;
-  char filename [] = "/data.txt";
-  File myDataFile = SPIFFS.open(filename, "w");            // Open a file for writing
-  if (!myDataFile) {
+  char filename[] = "/data.txt";
+  File myDataFile = SPIFFS.open(filename, "w"); // Open a file for writing
+  if (!myDataFile)
+  {
     Serial.println("Failed to open file");
     Serial.println("Stopping process - maybe flash size not set (SPIFFS).");
     exit(0);
   }
-    myDataFile.println(current_timestamp);                   // Saving timestamp to /data.txt
-      Serial.print("*!* current_timestamp = ");
-      Serial.println(current_timestamp);
+  myDataFile.println(current_timestamp); // Saving timestamp to /data.txt
+  Serial.print("*!* current_timestamp = ");
+  Serial.println(current_timestamp);
 
-  myDataFile.println(accuracy);                            // Saving accuracy value to /data.txt
-  for ( int i = 0; i < 12; i++) {
-    myDataFile.println(rel_pressure_rounded);              // Filling pressure array with current pressure
+  myDataFile.println(accuracy); // Saving accuracy value to /data.txt
+  for (int i = 0; i < 12; i++)
+  {
+    myDataFile.println(rel_pressure_rounded); // Filling pressure array with current pressure
   }
   Serial.println("** Saved initial pressure data. **");
-  myDataFile.close(); 
+  myDataFile.close();
 }
 
-void ReadFromSPIFFS() {
-  char filename [] = "/data.txt";
-  File myDataFile = SPIFFS.open(filename, "r");       // Open file for reading
-  if (!myDataFile) {
+void ReadFromSPIFFS()
+{
+  char filename[] = "/data.txt";
+  File myDataFile = SPIFFS.open(filename, "r"); // Open file for reading
+  if (!myDataFile)
+  {
     Serial.println("Failed to open file");
-    FirstTimeRun();                                   // no file there -> initializing
+    FirstTimeRun(); // no file there -> initializing
   }
-  
+
   Serial.println("---> Now reading from SPIFFS");
-  
+
   String temp_data;
 
-  temp_data = myDataFile.readStringUntil('\n');  
+  temp_data = myDataFile.readStringUntil('\n');
   saved_timestamp = temp_data.toInt();
-  Serial.print("Timestamp from SPIFFS: ");  Serial.println(saved_timestamp);
-  
-  temp_data = myDataFile.readStringUntil('\n');  
+  Serial.print("Timestamp from SPIFFS: ");
+  Serial.println(saved_timestamp);
+
+  temp_data = myDataFile.readStringUntil('\n');
   accuracy = temp_data.toInt();
-  Serial.print("Accuracy value read from SPIFFS: ");  Serial.println(accuracy);
+  Serial.print("Accuracy value read from SPIFFS: ");
+  Serial.println(accuracy);
 
   Serial.print("Last 12 saved pressure values: ");
-  for (int i = 0; i <= 11; i++) {
+  for (int i = 0; i <= 11; i++)
+  {
     temp_data = myDataFile.readStringUntil('\n');
     pressure_value[i] = temp_data.toInt();
     Serial.print(pressure_value[i]);
@@ -2331,30 +2647,33 @@ void ReadFromSPIFFS() {
   }
   myDataFile.close();
   Serial.println();
-
 }
 
-void WriteToSPIFFS(int write_timestamp) {
-  char filename [] = "/data.txt";
-  File myDataFile = SPIFFS.open(filename, "w");        // Open file for writing (appending)
-  if (!myDataFile) {
+void WriteToSPIFFS(int write_timestamp)
+{
+  char filename[] = "/data.txt";
+  File myDataFile = SPIFFS.open(filename, "w"); // Open file for writing (appending)
+  if (!myDataFile)
+  {
     Serial.println("Failed to open file");
   }
-  
+
   Serial.println("---> Now writing to SPIFFS");
-  
-  myDataFile.println(write_timestamp);                 // Saving timestamp to /data.txt
-  myDataFile.println(accuracy);                        // Saving accuracy value to /data.txt
-  
-  for ( int i = 0; i <= 11; i++) {
-    myDataFile.println(pressure_value[i]);             // Filling pressure array with updated values
+
+  myDataFile.println(write_timestamp); // Saving timestamp to /data.txt
+  myDataFile.println(accuracy);        // Saving accuracy value to /data.txt
+
+  for (int i = 0; i <= 11; i++)
+  {
+    myDataFile.println(pressure_value[i]); // Filling pressure array with updated values
   }
   myDataFile.close();
-  
+
   Serial.println("File written. Now reading file again.");
-  myDataFile = SPIFFS.open(filename, "r");             // Open file for reading
-  Serial.print("Found in /data.txt = "); 
-  while (myDataFile.available()) { 
+  myDataFile = SPIFFS.open(filename, "r"); // Open file for reading
+  Serial.print("Found in /data.txt = ");
+  while (myDataFile.available())
+  {
     Serial.print(myDataFile.readStringUntil('\n'));
     Serial.print("; ");
   }
@@ -2362,47 +2681,53 @@ void WriteToSPIFFS(int write_timestamp) {
   myDataFile.close();
 }
 
-void do_blynk() {
-//**************************Sending Data to Blynk and ThingSpeak*********************************
+void do_blynk()
+{
+  //**************************Sending Data to Blynk and ThingSpeak*********************************
   // code block for uploading data to BLYNK App
-  
+
   // if (App1 == "BLYNK") {
   //  Blynk.virtualWrite(0, measured_temp);            // virtual pin 0
   //  Blynk.virtualWrite(1, measured_humi);            // virtual pin 1
-    Blynk.virtualWrite(2, measured_pres);            // virtual pin 2
-    Blynk.virtualWrite(3, rel_pressure_rounded);     // virtual pin 3
-    Blynk.virtualWrite(4, temp);                     // virtual pin 4  - outside temp
-  //   Blynk.virtualWrite(5, DewpointTemperature);      // virtual pin 5
-  // Blynk.virtualWrite(6, HeatIndex);                // virtual pin 6
-    Blynk.virtualWrite(7, ZambrettisWords);          // virtual pin 7
-    Blynk.virtualWrite(8, accuracy_in_percent);      // virtual pin 8
-    Blynk.virtualWrite(9, trend_in_words);           // virtual pin 9
-    Blynk.virtualWrite(10,cpm);           // virtual pin 10
-  //   Serial.println("Data written to Blink ...");
-  // }
+  Blynk.virtualWrite(2, measured_pres);        // virtual pin 2
+  Blynk.virtualWrite(3, rel_pressure_rounded); // virtual pin 3
+  Blynk.virtualWrite(4, temp);                 // virtual pin 4  - outside temp
+                                               //   Blynk.virtualWrite(5, DewpointTemperature);      // virtual pin 5
+                                               // Blynk.virtualWrite(6, HeatIndex);                // virtual pin 6
+  Blynk.virtualWrite(7, ZambrettisWords);      // virtual pin 7
+  Blynk.virtualWrite(10, cpm);                 // virtual pin 10
+  Blynk.virtualWrite(8, accuracy_in_percent);  // virtual pin 8
+
+  if (accuracy < accuracygate)
+  {
+    Blynk.virtualWrite(9, "No trend"); // virtual pin 9
+  }
+  else
+  {
+    Blynk.virtualWrite(9, trend_in_words); // virtual pin 9
+  }
 }
 
-  void SPIFFS_init(){
+void SPIFFS_init()
+{
   //*****************Checking if SPIFFS available********************************
   Serial.println("SPIFFS Initialization: (First time run can last up to 30 sec - be patient)");
-  
-  boolean mounted = SPIFFS.begin();               // load config if it exists. Otherwise use defaults.
-  if (!mounted) {
+
+  boolean mounted = SPIFFS.begin(); // load config if it exists. Otherwise use defaults.
+  if (!mounted)
+  {
     Serial.println("FS not formatted. Doing that now... (can last up to 30 sec).");
     SPIFFS.format();
     Serial.println("FS formatted...");
     Serial.println("");
     SPIFFS.begin();
   }
-  }
-  
+}
 
-
-
-  void update_epoch_time()
+void update_epoch_time()
 {
   //update current time with millis
-  current_timestamp = millis_unix_timestamp_baseline + ((millis() - millis_unix_timestamp) /1000);
+  current_timestamp = millis_unix_timestamp_baseline + ((millis() - millis_unix_timestamp) / 1000);
 
   epoch = epochstart + (((millis() - startmillis) / 1000) * timefactor); //Get epoch from millis count.  May get over writtem by NTP pull.  timefactor is for testing to accellerate time for testing
   printNTP = 0;                                                          //Flag to state time was not from an NTP request.
@@ -2412,7 +2737,7 @@ void do_blynk() {
 
   if (Seconds_SinceLast_NTP_millis > NTP_Seconds_to_wait) //Don't go to NTP during flash phase as it causes flicker
   {
-    if (verbose_output == 1)
+    if (Display_data == 1)
     {
       Serial.print("millis = ");
       Serial.println(millis());
@@ -2457,16 +2782,18 @@ void do_blynk() {
     //Time confirmed received and more than wait period to pull NTP / Sunrise time
     Last_NTP_millis = millis(); //Set the Last_NTP_millis time to now - resets the wait time
 
-    Serial.println();
-    Serial.println("********************************************************");
-    Serial.println();
+    if (Display_data == 1)
+    {
+      Serial.println();
+      Serial.println("********************************************************");
+      Serial.println();
+    }
 
     yield();
     NTP_Seconds_to_wait = NTPSecondstowait; //Over write the initial wait period (1 sec) to the ongoing period (e.g 600 sec)
   }
   current_timestamp = epoch;
 }
-
 
 void initiate_time()
 {
@@ -2499,12 +2826,11 @@ void initiate_time()
   current_timestamp = epoch;
 }
 
-
 //Update the time
 void decode_epoch(unsigned long currentTime)
 {
   // print the raw epoch time from NTP server
-  if (printNTP == 1 && verbose_output == 1)
+  if (printNTP == 1 && Display_data == 1)
   {
     Serial.print("The epoch UTC time is ");
     Serial.print(epoch);
@@ -2551,7 +2877,7 @@ void decode_epoch(unsigned long currentTime)
     hour_UTC = hour_UTC - 12;
   }
 
-  if (printNTP == 1 && verbose_output == 1)
+  if (printNTP == 1 && Display_data == 1)
   {
     Serial.print("UTC Hour: ");
     Serial.print(hour_UTC);
@@ -2602,7 +2928,7 @@ void decode_epoch(unsigned long currentTime)
     local_clock_minutes_from_midnight = local_clock_minutes_from_midnight + 1440;
   }
 
-  if (printNTP == 1 && verbose_output == 1)
+  if (printNTP == 1 && Display_data == 1)
   {
     Serial.print("UTC Clock - Mins from midnight = ");
     Serial.print(clock_minutes_from_midnight);
@@ -2614,7 +2940,7 @@ void decode_epoch(unsigned long currentTime)
   }
 }
 
-  //Get time from NTP Server
+//Get time from NTP Server
 void Request_Time()
 {
   Serial.println("Getting Time");
@@ -2782,17 +3108,21 @@ void LocalClock()
     local_hour -= 12;
   }
 
-  Serial.println();
-  Serial.print("Local time: ");
-  Serial.print(local_hour);
-  Serial.print(":");
+  if (Display_data == 1)
+  {
+    Serial.println();
+    Serial.print("Local time: ");
+    Serial.print(local_hour);
+    Serial.print(":");
 
-  if (minute_UTC < 10){
-    Serial.print("0");
+    if (minute_UTC < 10)
+    {
+      Serial.print("0");
+    }
+
+    Serial.print(minute_UTC);
+    Serial.print(" ");
+    Serial.println(AMPM);
+    Serial.println();
   }
-
-  Serial.print(minute_UTC);
-  Serial.print(" ");
-  Serial.println(AMPM);
-  Serial.println();
 }

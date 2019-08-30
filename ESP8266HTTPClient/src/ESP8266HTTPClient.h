@@ -37,35 +37,40 @@
 
 #ifdef DEBUG_ESP_HTTP_CLIENT
 #ifdef DEBUG_ESP_PORT
-#define DEBUG_HTTPCLIENT(fmt, ...) DEBUG_ESP_PORT.printf_P( (PGM_P)PSTR(fmt), ## __VA_ARGS__ )
+#define DEBUG_HTTPCLIENT(fmt, ...) DEBUG_ESP_PORT.printf_P((PGM_P)PSTR(fmt), ##__VA_ARGS__)
 #endif
 #endif
 
 #ifndef DEBUG_HTTPCLIENT
-#define DEBUG_HTTPCLIENT(...) do { (void)0; } while (0)
+#define DEBUG_HTTPCLIENT(...) \
+    do                        \
+    {                         \
+        (void)0;              \
+    } while (0)
 #endif
 
 //#define HTTPCLIENT_DEFAULT_TCP_TIMEOUT (5000)
-#define HTTPCLIENT_DEFAULT_TCP_TIMEOUT (50)
+#define HTTPCLIENT_DEFAULT_TCP_TIMEOUT (100)
 
 /// HTTP client errors
-#define HTTPC_ERROR_CONNECTION_REFUSED  (-1)
-#define HTTPC_ERROR_SEND_HEADER_FAILED  (-2)
+#define HTTPC_ERROR_CONNECTION_REFUSED (-1)
+#define HTTPC_ERROR_SEND_HEADER_FAILED (-2)
 #define HTTPC_ERROR_SEND_PAYLOAD_FAILED (-3)
-#define HTTPC_ERROR_NOT_CONNECTED       (-4)
-#define HTTPC_ERROR_CONNECTION_LOST     (-5)
-#define HTTPC_ERROR_NO_STREAM           (-6)
-#define HTTPC_ERROR_NO_HTTP_SERVER      (-7)
-#define HTTPC_ERROR_TOO_LESS_RAM        (-8)
-#define HTTPC_ERROR_ENCODING            (-9)
-#define HTTPC_ERROR_STREAM_WRITE        (-10)
-#define HTTPC_ERROR_READ_TIMEOUT        (-11)
+#define HTTPC_ERROR_NOT_CONNECTED (-4)
+#define HTTPC_ERROR_CONNECTION_LOST (-5)
+#define HTTPC_ERROR_NO_STREAM (-6)
+#define HTTPC_ERROR_NO_HTTP_SERVER (-7)
+#define HTTPC_ERROR_TOO_LESS_RAM (-8)
+#define HTTPC_ERROR_ENCODING (-9)
+#define HTTPC_ERROR_STREAM_WRITE (-10)
+#define HTTPC_ERROR_READ_TIMEOUT (-11)
 
 /// size for the stream handling
 #define HTTP_TCP_BUFFER_SIZE (1460)
 
 /// HTTP codes see RFC7231
-typedef enum {
+typedef enum
+{
     HTTP_CODE_CONTINUE = 100,
     HTTP_CODE_SWITCHING_PROTOCOLS = 101,
     HTTP_CODE_PROCESSING = 102,
@@ -126,7 +131,8 @@ typedef enum {
     HTTP_CODE_NETWORK_AUTHENTICATION_REQUIRED = 511
 } t_http_codes;
 
-typedef enum {
+typedef enum
+{
     HTTPC_TE_IDENTITY,
     HTTPC_TE_CHUNKED
 } transferEncoding_t;
@@ -144,7 +150,7 @@ public:
     HTTPClient();
     ~HTTPClient();
 
-/*
+    /*
  * Since both begin() functions take a reference to client as a parameter, you need to 
  * ensure the client object lives the entire time of the HTTPClient
  */
@@ -153,16 +159,16 @@ public:
 
 #if HTTPCLIENT_1_1_COMPATIBLE
     // Plain HTTP connection, unencrypted
-    bool begin(String url)  __attribute__ ((deprecated));
-    bool begin(String host, uint16_t port, String uri = "/")  __attribute__ ((deprecated));
+    bool begin(String url) __attribute__((deprecated));
+    bool begin(String host, uint16_t port, String uri = "/") __attribute__((deprecated));
     // Use axTLS for secure HTTPS connection
-    bool begin(String url, String httpsFingerprint)  __attribute__ ((deprecated));
-    bool begin(String host, uint16_t port, String uri, String httpsFingerprint)  __attribute__ ((deprecated));
+    bool begin(String url, String httpsFingerprint) __attribute__((deprecated));
+    bool begin(String host, uint16_t port, String uri, String httpsFingerprint) __attribute__((deprecated));
     // Use BearSSL for secure HTTPS connection
-    bool begin(String url, const uint8_t httpsFingerprint[20])  __attribute__ ((deprecated));
-    bool begin(String host, uint16_t port, String uri, const uint8_t httpsFingerprint[20])  __attribute__ ((deprecated));
+    bool begin(String url, const uint8_t httpsFingerprint[20]) __attribute__((deprecated));
+    bool begin(String host, uint16_t port, String uri, const uint8_t httpsFingerprint[20]) __attribute__((deprecated));
     // deprecated, use the overload above instead
-    bool begin(String host, uint16_t port, String uri, bool https, String httpsFingerprint)  __attribute__ ((deprecated));
+    bool begin(String host, uint16_t port, String uri, bool https, String httpsFingerprint) __attribute__((deprecated));
 #endif
 
     void end(void);
@@ -170,68 +176,67 @@ public:
     bool connected(void);
 
     void setReuse(bool reuse); /// keep-alive
-    void setUserAgent(const String& userAgent);
-    void setAuthorization(const char * user, const char * password);
-    void setAuthorization(const char * auth);
+    void setUserAgent(const String &userAgent);
+    void setAuthorization(const char *user, const char *password);
+    void setAuthorization(const char *auth);
     void setTimeout(uint16_t timeout);
     void setFollowRedirects(bool follow);
     void setRedirectLimit(uint16_t limit); // max redirects to follow for a single request
-    bool setURL(String url); // handy for handling redirects
+    bool setURL(String url);               // handy for handling redirects
     void useHTTP10(bool usehttp10 = true);
 
     /// request handling
     int GET();
-    int POST(uint8_t * payload, size_t size);
+    int POST(uint8_t *payload, size_t size);
     int POST(String payload);
-    int PUT(uint8_t * payload, size_t size);
+    int PUT(uint8_t *payload, size_t size);
     int PUT(String payload);
-    int PATCH(uint8_t * payload, size_t size);
+    int PATCH(uint8_t *payload, size_t size);
     int PATCH(String payload);
-    int sendRequest(const char * type, String payload);
-    int sendRequest(const char * type, uint8_t * payload = NULL, size_t size = 0);
-    int sendRequest(const char * type, Stream * stream, size_t size = 0);
+    int sendRequest(const char *type, String payload);
+    int sendRequest(const char *type, uint8_t *payload = NULL, size_t size = 0);
+    int sendRequest(const char *type, Stream *stream, size_t size = 0);
 
-    void addHeader(const String& name, const String& value, bool first = false, bool replace = true);
+    void addHeader(const String &name, const String &value, bool first = false, bool replace = true);
 
     /// Response handling
-    void collectHeaders(const char* headerKeys[], const size_t headerKeysCount);
-    String header(const char* name);   // get request header value by name
-    String header(size_t i);              // get request header value by number
-    String headerName(size_t i);          // get request header name by number
-    int headers();                     // get header count
-    bool hasHeader(const char* name);  // check if header exists
-
+    void collectHeaders(const char *headerKeys[], const size_t headerKeysCount);
+    String header(const char *name);  // get request header value by name
+    String header(size_t i);          // get request header value by number
+    String headerName(size_t i);      // get request header name by number
+    int headers();                    // get header count
+    bool hasHeader(const char *name); // check if header exists
 
     int getSize(void);
-    const String& getLocation(void); // Location header from redirect if 3XX
+    const String &getLocation(void); // Location header from redirect if 3XX
 
-    WiFiClient& getStream(void);
-    WiFiClient* getStreamPtr(void);
-    int writeToStream(Stream* stream);
-    const String& getString(void);
+    WiFiClient &getStream(void);
+    WiFiClient *getStreamPtr(void);
+    int writeToStream(Stream *stream);
+    const String &getString(void);
     static String errorToString(int error);
 
 protected:
-    struct RequestArgument {
+    struct RequestArgument
+    {
         String key;
         String value;
     };
 
-    bool beginInternal(String url, const char* expectedProtocol);
+    bool beginInternal(String url, const char *expectedProtocol);
     void disconnect(bool preserveClient = false);
     void clear();
     int returnError(int error);
     bool connect(void);
-    bool sendHeader(const char * type);
+    bool sendHeader(const char *type);
     int handleHeaderResponse();
-    int writeToStreamDataBlock(Stream * stream, int len);
-
+    int writeToStreamDataBlock(Stream *stream, int len);
 
 #if HTTPCLIENT_1_1_COMPATIBLE
     TransportTraitsPtr _transportTraits;
     std::unique_ptr<WiFiClient> _tcpDeprecated;
 #endif
-    WiFiClient* _client;
+    WiFiClient *_client;
 
     /// request handling
     String _host;
@@ -247,8 +252,8 @@ protected:
     String _base64Authorization;
 
     /// Response handling
-    RequestArgument* _currentHeaders = nullptr;
-    size_t           _headerKeysCount = 0;
+    RequestArgument *_currentHeaders = nullptr;
+    size_t _headerKeysCount = 0;
 
     int _returnCode = 0;
     int _size = -1;
@@ -260,7 +265,5 @@ protected:
     transferEncoding_t _transferEncoding = HTTPC_TE_IDENTITY;
     std::unique_ptr<StreamString> _payload;
 };
-
-
 
 #endif /* ESP8266HTTPClient_H_ */

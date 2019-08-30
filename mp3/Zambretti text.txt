@@ -1,0 +1,67 @@
+Settled Fine Weather.
+
+Fine Weather.
+
+Becoming Fine.
+
+Fine but Becoming Less Settled.
+
+Fine but Possibly showers.
+
+Fairly Fine and Improving.
+
+Fairly Fine but Possibly showers early.
+
+Fairly Fine but Showers Later.
+
+Showery Early but Improving.
+
+Changeable Improving.
+
+Fairly Fine but Showers likely.
+
+Rather Unsettled but Clearing Later.
+
+Unsettled but Probably Improving.
+
+Showery Bright Intervals.
+
+Showery Becoming and Unsettled.
+
+Changeable with some rain.
+
+Unsettled but short fine Intervals.
+
+Unsettled and Rain later.
+
+Unsettled and rain at times.
+
+Very Unsettled but Fine at times.
+
+Rain at times but becoming Worse later.
+
+Rain at times but becoming very unsettled.
+
+Rain at Frequent Intervals.
+
+Very Unsettled and Rain.
+
+Stormy but possibly improving.
+
+Stormy and with a lot of rain.
+
+Sorry but no forecast for the moment.
+
+Rising fast.
+
+Rising.
+
+Rising slow.
+
+Steady.
+
+Falling slow.
+
+Falling.
+
+Falling fast.
